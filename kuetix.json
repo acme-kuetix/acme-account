@@ -1,0 +1,19 @@
+{
+  "name": "acme-account",
+  "version": "0.1.0",
+  "description": "Kuetix package with reusable workflows and transitions for the Chart of Accounts domain primitive",
+  "author": "acme",
+  "workflows": [
+    "workflows/solutions/account/list.wsl",
+    "workflows/solutions/account/create.wsl",
+    "workflows/solutions/account/get.wsl",
+    "workflows/solutions/account/update.wsl",
+    "workflows/solutions/account/delete.wsl",
+    "workflows/solutions/account/tree.wsl"
+  ],
+  "features": [],
+  "solutions": [],
+  "dependencies": {
+    "github.com/kuetix/std-core": "v1.0.0"
+  }
+}

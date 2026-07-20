@@ -1,0 +1,38 @@
+// GET /accounts/{accountId} — get a single account by accountId.
+// Expects URL param: accountId
+// Composes persistence/store (collection "accounts").
+// Provided by acme-account package.
+
+module account_get
+
+import persistence/store
+import services/common
+
+workflow get {
+  start: Get
+
+  state Get {
+    action persistence/store/store.Get(
+      collection: "accounts",
+      id: $url.accountId
+    ) as Result
+    on success -> OK
+    on error -> NotFound
+  }
+
+  state OK {
+    action services/common/response.Response(
+      value: $Result.response.doc,
+      statusCode: 200
+    ) as FinalResult
+    end ok
+  }
+
+  state NotFound {
+    action services/common/response.Response(
+      value: { message: $Result.response.message??"account not found", accountId: $url.accountId },
+      statusCode: $Result.statusCode??404
+    ) as ErrorResult
+    end fail
+  }
+}

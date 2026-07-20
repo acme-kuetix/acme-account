@@ -1,0 +1,12 @@
+{
+  "account/account": {
+    "info": {
+      "go_module": "github.com/acme-kuetix/acme-account",
+      "namespace": "account",
+      "class": "account",
+      "label": "Account Module",
+      "description": "Handles account operations for account service"
+    },
+    "methods": null
+  }
+}

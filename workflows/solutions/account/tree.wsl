@@ -1,0 +1,34 @@
+// GET /accounts/tree — get the chart of accounts as a nested tree.
+// Composes account/account.GetAccountTree (Go primitive — WSL can't recurse).
+// Provided by acme-account package.
+
+module account_tree
+
+import account/account
+import services/common
+
+workflow tree {
+  start: Tree
+
+  state Tree {
+    action account/account.GetAccountTree(rootId: "") as Result
+    on success -> OK
+    on error -> Failed
+  }
+
+  state OK {
+    action services/common/response.Response(
+      value: { count: $Result.response.count, tree: $Result.response.tree },
+      statusCode: 200
+    ) as FinalResult
+    end ok
+  }
+
+  state Failed {
+    action services/common/response.Response(
+      value: { message: "failed to build account tree" },
+      statusCode: 500
+    ) as ErrorResult
+    end fail
+  }
+}

@@ -1,0 +1,84 @@
+// DELETE /accounts/{accountId} — delete an account by accountId.
+// Fails if the account has children (AssertNoChildren on parentCode).
+// Composes persistence/store.Get (load doc), persistence/store.AssertNoChildren
+// (guard), persistence/store.Delete.
+// Provided by acme-account package.
+//
+// Per-state failure handlers: each errorable state routes to its own
+// <StateName>Failed terminal state with a LITERAL statusCode (chosen per
+// failure type) and $Alias.response.message for the message. Avoids the
+// WSL ?? operator which doesn't work for $Alias.field??literal when the
+// alias exists but the field is missing (tokenSegmentClass includes ?),
+// and avoids $? which is overwritten by worker.SetError to 500 on every
+// error path.
+
+module account_delete
+
+import persistence/store
+import services/common
+
+workflow account_delete {
+  start: Load
+
+  state Load {
+    action persistence/store/store.Get(
+      collection: "accounts",
+      id: $url.accountId
+    ) as GetResult
+    on success -> CheckChildren
+    on error -> LoadFailed
+  }
+
+  state CheckChildren {
+    action persistence/store/store.AssertNoChildren(
+      collection: "accounts",
+      field: "parentCode",
+      value: $GetResult.response.doc.code,
+      filterField: "",
+      filterValue: ""
+    ) as ChildCheck
+    on success -> Delete
+    on error -> CheckChildrenFailed
+  }
+
+  state Delete {
+    action persistence/store/store.Delete(
+      collection: "accounts",
+      id: $url.accountId
+    ) as DelResult
+    on success -> OK
+    on error -> DeleteFailed
+  }
+
+  state OK {
+    action services/common/response.Response(
+      value: { accountId: $url.accountId, deleted: true },
+      statusCode: 200
+    ) as FinalResult
+    end ok
+  }
+
+  state LoadFailed {
+    action services/common/response.Response(
+      value: { message: $GetResult.response.message, accountId: $url.accountId },
+      statusCode: 404
+    ) as ErrorResult
+    end fail
+  }
+
+  state CheckChildrenFailed {
+    action services/common/response.Response(
+      value: { message: $ChildCheck.response.message, accountId: $url.accountId },
+      statusCode: 409
+    ) as ErrorResult
+    end fail
+  }
+
+  state DeleteFailed {
+    action services/common/response.Response(
+      value: { message: $DelResult.response.message, accountId: $url.accountId },
+      statusCode: 500
+    ) as ErrorResult
+    end fail
+  }
+}

@@ -1,0 +1,222 @@
+// POST /accounts — create a new account.
+// Expects JSON body: {code, name, type, parentCode?, debitCredit?, active?}
+// Composes strings/ops (validation + type→direction switch + override via
+// Coalesce + AssertOneOf) + persistence/store + sequence/sequence.
+// Uniqueness is enforced via persistence/store.AssertUnique on the "code"
+// field — returns 409 if duplicate exists.
+// Provided by acme-account package.
+//
+// Per-state failure handlers: each errorable state routes to its own
+// <StateName>Failed terminal state with a LITERAL statusCode (chosen per
+// failure type) and $Alias.response.message for the message. Avoids the
+// WSL ?? operator which doesn't work for $Alias.field??literal when the
+// alias exists but the field is missing (tokenSegmentClass includes ?),
+// and avoids $? which is overwritten by worker.SetError to 500 on every
+// error path.
+
+module account_create
+
+import persistence/store
+import sequence/sequence
+import services/common
+import strings/ops
+
+workflow account_create {
+  start: ValidateCode
+
+  state ValidateCode {
+    action strings/ops/ops.AssertRequiredUpper(
+      value: $json.code,
+      code: "invalid_code",
+      message: "code is required"
+    ) as CodeValid
+    on success -> ValidateName
+    on error -> ValidateCodeFailed
+  }
+
+  state ValidateName {
+    action strings/ops/ops.AssertRequired(
+      value: $json.name,
+      code: "invalid_name",
+      message: "name is required"
+    ) as NameValid
+    on success -> ValidateType
+    on error -> ValidateNameFailed
+  }
+
+  state ValidateType {
+    action strings/ops/ops.AssertRequiredLower(
+      value: $json.type,
+      code: "invalid_type",
+      message: "type is required"
+    ) as TypeLower
+    on success -> CheckType
+    on error -> ValidateTypeFailed
+  }
+
+  state CheckType {
+    action strings/ops/ops.AssertOneOf(
+      value: $TypeLower.response.value,
+      list: "asset,liability,equity,revenue,expense",
+      code: "invalid_type",
+      message: "type must be asset, liability, equity, revenue, or expense"
+    ) as TypeChecked
+    on success -> DeriveDirection
+    on error -> CheckTypeFailed
+  }
+
+  state DeriveDirection {
+    action strings/ops/ops.Switch(
+      value: $TypeLower.response.value,
+      mapping: {asset: "debit", expense: "debit", liability: "credit", equity: "credit", revenue: "credit"},
+      defaultVal: ""
+    ) as DirResult
+    on success -> PickDirection
+    on error -> DeriveDirectionFailed
+  }
+
+  state PickDirection {
+    action strings/ops/ops.Switch(
+      value: $json.debitCredit??"",
+      mapping: {debit: "debit", credit: "credit"},
+      defaultVal: $DirResult.response.value
+    ) as FinalDir
+    on success -> ValidateDir
+    on error -> PickDirectionFailed
+  }
+
+  state ValidateDir {
+    action strings/ops/ops.AssertOneOf(
+      value: $FinalDir.response.value,
+      list: "debit,credit",
+      code: "invalid_debitCredit",
+      message: "debitCredit must be 'debit' or 'credit'"
+    ) as DirChecked
+    on success -> CheckCode
+    on error -> ValidateDirFailed
+  }
+
+  state CheckCode {
+    action persistence/store/store.AssertUnique(
+      collection: "accounts",
+      field: "code",
+      value: $CodeValid.response.value
+    ) as CodeCheck
+    on success -> GetId
+    on error -> CheckCodeFailed
+  }
+
+  state GetId {
+    action sequence/sequence.NextByCode(code: "account", scope: "") as IdResult
+    on success -> Create
+    on error -> GetIdFailed
+  }
+
+  state Create {
+    action persistence/store/store.Create(
+      collection: "accounts",
+      id: $IdResult.response.formatted,
+      doc: {
+        id: $IdResult.response.formatted,
+        code: $CodeValid.response.value,
+        name: $json.name,
+        type: $TypeLower.response.value,
+        parentCode: $json.parentCode??"",
+        debitCredit: $DirChecked.response.value,
+        active: $json.active??true,
+        createdAt: "now",
+        updatedAt: "now"
+      }
+    ) as Result
+    on success -> OK
+    on error -> CreateFailed
+  }
+
+  state OK {
+    action services/common/response.Response(
+      value: $Result.response.doc,
+      statusCode: 201
+    ) as FinalResult
+    end ok
+  }
+
+  state ValidateCodeFailed {
+    action services/common/response.Response(
+      value: { message: $CodeValid.response.message },
+      statusCode: 400
+    ) as ErrorResult
+    end fail
+  }
+
+  state ValidateNameFailed {
+    action services/common/response.Response(
+      value: { message: $NameValid.response.message },
+      statusCode: 400
+    ) as ErrorResult
+    end fail
+  }
+
+  state ValidateTypeFailed {
+    action services/common/response.Response(
+      value: { message: $TypeLower.response.message },
+      statusCode: 400
+    ) as ErrorResult
+    end fail
+  }
+
+  state CheckTypeFailed {
+    action services/common/response.Response(
+      value: { message: $TypeChecked.response.message },
+      statusCode: 400
+    ) as ErrorResult
+    end fail
+  }
+
+  state DeriveDirectionFailed {
+    action services/common/response.Response(
+      value: { message: $DirResult.response.message??"create failed" },
+      statusCode: 500
+    ) as ErrorResult
+    end fail
+  }
+
+  state PickDirectionFailed {
+    action services/common/response.Response(
+      value: { message: $FinalDir.response.message??"create failed" },
+      statusCode: 500
+    ) as ErrorResult
+    end fail
+  }
+
+  state ValidateDirFailed {
+    action services/common/response.Response(
+      value: { message: $DirChecked.response.message },
+      statusCode: 400
+    ) as ErrorResult
+    end fail
+  }
+
+  state CheckCodeFailed {
+    action services/common/response.Response(
+      value: { message: $CodeCheck.response.message },
+      statusCode: 409
+    ) as ErrorResult
+    end fail
+  }
+
+  state GetIdFailed {
+    action services/common/response.Response(
+      value: { message: $IdResult.response.message??"create failed" },
+      statusCode: 500
+    ) as ErrorResult
+    end fail
+  }
+
+  state CreateFailed {
+    action services/common/response.Response(
+      value: { message: $Result.response.message??"create failed" },
+      statusCode: 500
+    ) as ErrorResult
+    end fail
+  }
+}
