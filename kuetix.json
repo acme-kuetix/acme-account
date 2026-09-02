@@ -1,6 +1,6 @@
 {
   "name": "acme-account",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Kuetix package with reusable workflows and transitions for the Chart of Accounts domain primitive",
   "author": "acme",
   "workflows": [
